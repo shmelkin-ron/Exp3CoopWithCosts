@@ -44,6 +44,7 @@ def update_weights(weights, loss, queried_agents, observed_arms, lr, communicati
     indicator_prob = np.zeros(loss.shape)
     indicator_prob[a_t] = 1.0 / 1.0 - np.prod((1.0 - communication_prob * arms_dist[:, a_t].T), axis=1)
 
+
     l_hat = np.divide(l_t, indicator_prob, out=np.zeros_like(l_t), where=indicator_prob != 0)
     return weights * np.exp(-lr * l_hat)
 
