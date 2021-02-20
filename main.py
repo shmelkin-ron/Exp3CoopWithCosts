@@ -11,6 +11,7 @@ from numpy.random import choice
 import argparse
 from scipy.special import softmax
 
+
 class AgentHistory:
     def __init__(self, id, T):
 
@@ -25,7 +26,6 @@ def get_distributions(weights, lr):
 
     w = -lr * weights
     return softmax(w, axis=1)
-    # return tuple((1.0 - gamma) * (w / weight_sum) + (gamma / len(weights)) for w in weights)
 
 
 def draw(arms_ids, probability_distribution, n_recs=1):
@@ -67,36 +67,13 @@ def choose_agent_to_query(id, communication_costs, arms_dist, lr):
     return coin_flips, tot_communication_cost, sample_prob
 
 
-# def exp3_policy(df, history, t, weights, movieId_weight_mapping, gamma, n_recs, batch_size):
-#     '''
-#     Applies EXP3 policy to generate movie recommendations
-#     Args:
-#         df: dataframe. Dataset to apply EXP3 policy to
-#         history: dataframe. events that the offline bandit has access to (not discarded by replay evaluation method)
-#         t: int. represents the current time step.
-#         weights: array or list. Weights used by EXP3 algorithm.
-#         movieId_weight_mapping: dict. Maping between movie IDs and their index in the array of EXP3 weights.
-#         gamma: float. hyperparameter for algorithm tuning.
-#         n_recs: int. Number of recommendations to generate in each iteration.
-#         batch_size: int. Number of observations to show recommendations to in each iteration.
-#     '''
-#     probability_distribution = distr(weights, gamma)
-#     recs = draw(probability_distribution, n_recs=n_recs)
-#     history, action_score = score(history, df, t, batch_size, recs)
-#     weights = update_weights(weights, gamma, movieId_weight_mapping, probability_distribution, action_score)
-#     action_score = action_score.liked.tolist()
-#     return history, action_score, weights
-#
-#
-# history, action_score, weights = exp3_policy(df, history, t, weights, movieId_weight_mapping, args.gamma, args.n, args.batch_size)
-
-
 def initialize_history(T, N):
     h = []
     for i in range(N):
         h.append(AgentHistory(id=i, T=T))
 
     return h
+
 
 parser = argparse.ArgumentParser(description='Process some integers.')
 
@@ -164,9 +141,9 @@ def main(args):
 
         # update weights
         for agent in range(N):
-            weights[agent] = update_weights(weights=weights[agent], loss=loss_a_t, queried_agents=queried_agents[t][agent],
-                           observed_arms=observed_arms[t], lr=lr, communication_prob=communication_prob[agent],
-                           arms_dist=arms_dist)
+            weights[agent] = update_weights(weights=weights[agent], loss=loss_a_t,
+                                            queried_agents=queried_agents[t][agent], observed_arms=observed_arms[t],
+                                            lr=lr, communication_prob=communication_prob[agent], arms_dist=arms_dist)
         # # update probabilities
         # for agent in range(N):
         #
