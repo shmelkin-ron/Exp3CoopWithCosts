@@ -9,8 +9,11 @@ import numpy as np
 from tqdm import tqdm
 from numpy.random import choice
 import argparse
-from scipy.special import softmax
+import os
+from datetime import datetime
+import math
 
+from scipy.special import softmax
 
 class AgentHistory:
     def __init__(self, id, T):
@@ -20,6 +23,23 @@ class AgentHistory:
         self.observed_loss = np.zeros(T)
         self.communication_cost = np.zeros(T)
         self.agents_observed = []
+
+
+def get_baselines(args):
+
+    exp3 = math.sqrt(args.T * args.K)
+    exp4 = 2.0 * math.sqrt(3) * math.sqrt(args.T * args.N * math.log(args.N, 2)) + 1
+    fi = math.sqrt(args.T * math.log(args.K, 2))
+
+    return exp3, exp4, fi
+
+
+def get_learning_rate(args, communication_costs):
+
+    c_tag = args.c # TODO: change this
+    lr = 1.0 / (math.pow(c_tag/math.log(args.K, 2), (2.0/3.0)) + math.sqrt((args.T * args.K) / math.log(args.K, 2)))
+    print("Learning rate {}".format(lr))
+    return lr
 
 
 def get_distributions(weights, lr):
@@ -64,7 +84,7 @@ def choose_agent_to_query(id, communication_costs, arms_dist, lr):
     sample_prob[id] = 1.0
     coin_flips = np.random.binomial(n=1, p=sample_prob)
     # Subtract personal cost
-    tot_communication_cost = np.sum(communication_costs[coin_flips]) - communication_costs[id]
+    tot_communication_cost = np.sum(communication_costs[np.where(coin_flips)]) - communication_costs[id]
     return coin_flips, tot_communication_cost, sample_prob
 
 
@@ -76,9 +96,19 @@ def initialize_history(T, N):
     return h
 
 
+def make_logdir(args, lr ):
+
+    logdir = "./logs/T_{}_K_{}_N_{}_lr_{}_seed_{}_costs_{}/".format(args.T, args.K, args.N, lr, args.seed,
+                                                                    args.c or 'random' ) + \
+             datetime.now().strftime("%Y%m%d-%H%M%S")
+
+    os.makedirs(logdir)
+
+    return logdir
+
 parser = argparse.ArgumentParser(description='Process some integers.')
 
-parser.add_argument('--T', dest='T', type=int,  help='Horizontal time', default=1000000)
+parser.add_argument('--T', dest='T', type=int,  help='Horizontal time', default=100)
 parser.add_argument('--K', dest='K', type=int,  help='Number of arms')
 parser.add_argument('--cost', dest='c', type=float,  help='Number of arms', default=None)
 parser.add_argument('--N', dest='N', type=int, help='Number of cooperating agents')
@@ -95,12 +125,13 @@ def main(args):
     lr = args.lr
     c = args.c
 
+
     np.random.seed(args.seed)
     # generate oblivious adversary losses
     adv_loss_map = np.random.random_sample((T, K))
     arms_ids = np.arange(K, dtype=np.int)
     # generate distribution of communication costs
-    if c:
+    if c is not None:
         communication_costs = np.ones((T, N)) * c
         print("Using const costs")
     else:
@@ -117,6 +148,14 @@ def main(args):
     queried_agents = np.zeros((T, N, N), dtype=np.int)
     communication_prob = np.zeros((N, N))
     # history = initialize_history(T, N)
+
+    if lr is None:
+        lr = get_learning_rate(args, communication_costs)
+
+    logdir = make_logdir(args, lr)
+    min_loss = np.min(np.sum(adv_loss_map, axis=0))
+    exp3, exp4, fi = get_baselines(args)
+    print("Baselines EXP3:[{}] EXP4:[{}] FI:[{}]".format(exp3, exp4, fi))
 
     for t in tqdm(range(T)):
 
@@ -150,7 +189,12 @@ def main(args):
         #
         #     arms_dist[t][N] = update_weights(weights=weights, observed_arms[t])
 
+    for agent in range(N):
+        obs_loss = np.sum(observed_loss[:, agent, 0])
+        com_costs = np.sum(observed_loss[:, agent, 1])
 
+        print("Agent [{}] Regret [{}] Played Loss [{}] Communication Loss [{}]".
+              format(agent, obs_loss + com_costs - min_loss, obs_loss, com_costs))
 
 if __name__ == '__main__':
     main(args)
