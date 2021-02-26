@@ -45,11 +45,16 @@ class AgentHistory:
         self.agents_observed = []
 
 
-def get_baselines(args):
+def get_ub(args, t):
 
-    exp3 = math.sqrt(2 * args.T * args.K * math.log(args.K, 2))
-    exp4 = 2.0 * math.sqrt(3) * math.sqrt(args.T * args.N * math.log(args.N, 2)) + 1
-    fi = math.sqrt(args.T * math.log(args.K, 2))
+    if t is None:
+        exp3 = math.sqrt(2 * args.T * args.K * math.log(args.K, 2))
+        exp4 = 2.0 * math.sqrt(3) * math.sqrt(args.T * args.N * math.log(args.N, 2)) + 1
+        fi = math.sqrt(args.T * math.log(args.K, 2))
+    else:
+        exp3 = math.sqrt(2 * t * args.K * math.log(args.K, 2))
+        exp4 = 2.0 * math.sqrt(3) * math.sqrt(t * args.N * math.log(args.N, 2)) + 1
+        fi = math.sqrt(t * math.log(args.K, 2))
 
     return exp3, exp4, fi
 
@@ -89,7 +94,7 @@ def update_weights(weights, loss, queried_agents, observed_arms, lr, communicati
     l_t[a_t] = loss[a_t]
 
     indicator_prob = np.zeros(loss.shape)
-    indicator_prob[a_t] = 1.0 / 1.0 - np.prod((1.0 - communication_prob * arms_dist[:, a_t].T), axis=1)
+    indicator_prob[a_t] = 1.0 - np.prod((1.0 - communication_prob * arms_dist[:, a_t].T), axis=1)
 
     l_hat = np.divide(l_t, indicator_prob, out=np.zeros_like(l_t), where=indicator_prob != 0)
     return weights * np.exp(-lr * l_hat)
@@ -222,11 +227,12 @@ def main(args):
     communication_prob = np.zeros((N, N))
     # history = initialize_history(T, N)
     writer = SummaryWriter(log_dir=log_dir)
-    exp3, exp4, fi = get_baselines(args)
+    exp3, exp4, fi = get_ub(args)
     print("Upper Bound EXP3:[{}] EXP4:[{}] FI:[{}]".format(exp3, exp4, fi))
 
     for t in tqdm(range(T)):
 
+        exp3, exp4, fi = get_ub(args, t)
         loss_a_t = adv_loss_map[t]
         costs_t = communication_costs[t]
         arms_dist = get_distributions(weights, lr=lr)
