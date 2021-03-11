@@ -45,7 +45,7 @@ class AgentHistory:
         self.agents_observed = []
 
 
-def get_ub(args, t):
+def get_ub(args, t=None):
 
     if t is None:
         exp3 = math.sqrt(2 * args.T * args.K * math.log(args.K, 2))
@@ -65,8 +65,10 @@ def get_learning_rate(args, communication_costs):
         lr = np.sqrt(2.0 * math.log(args.K, 2) / (args.T * args.K))
 
     else:
-        c_tag = args.T * (args.N - 1) * np.sqrt(args.c)
-        lr = 1.0 / (math.pow(c_tag/math.log(args.K, 2), (2.0/3.0)) + math.sqrt((args.T * args.K) / math.log(args.K, 2)))
+        # c_tag = args.T * (args.N - 1) * np.sqrt(args.c)
+        c_tag = np.sqrt(args.c)
+        lr = 1.0 / (math.pow(c_tag/math.log(args.K, 2), (2.0/3.0)) +
+                    math.sqrt((args.T * min(args.K, args.N)) / math.log(args.N, 2)))
         print("Learning rate {}".format(lr))
 
     return lr
@@ -131,6 +133,38 @@ def choose_agent_to_query(id, communication_costs, arms_dist, lr, exp3):
     return coin_flips, tot_communication_cost, sample_prob
 
 
+def choose_agent_to_query_by_KS(id, communication_costs, arms_dist, lr, exp3):
+
+    def suprimum_dist(x, y):
+        return max(np.abs(x - y))
+
+    personal_dist = arms_dist[id]
+    distances = np.apply_along_axis(suprimum_dist, 1, arms_dist, personal_dist)
+
+    # z probabilities
+    sample_prob = np.sqrt(arms_dist.shape[1]/arms_dist.shape[0]) * np.sqrt((lr/2)) * distances
+    # if a cost is zero we sample all agents
+    if np.all(np.array(communication_costs) == 0):
+        sample_prob = np.ones_like(sample_prob)
+
+    else:
+        sample_prob = sample_prob * (1 / np.sqrt(communication_costs))
+
+    sample_prob[sample_prob > 1.0] = 1.0
+
+    # do not sample other agents
+    if exp3:
+        sample_prob = np.zeros_like(sample_prob)
+
+    # include yourself, we will use it in weights updates
+    sample_prob[id] = 1.0
+    coin_flips = np.random.binomial(n=1, p=sample_prob)
+    # Subtract personal cost
+    tot_communication_cost = np.sum(communication_costs[np.where(coin_flips)]) - communication_costs[id]
+    return coin_flips, tot_communication_cost, sample_prob
+
+
+
 def initialize_history(T, N):
     h = []
     for i in range(N):
@@ -143,8 +177,8 @@ def make_logdir(args, lr ):
 
     c = 'random' if args.c is None else args.c
 
-    log_dir = "T_{}_K_{}_N_{}_lr_{}_ls_{}_seed_{}_costs_{}/".format(args.T, args.K, args.N, lr, args.ls, args.seed,
-                                                                    c) + \
+    log_dir = "T_{}_K_{}_N_{}_lr_{}_ls_{}_seed_{}_costs_{}_z_{}/".format(args.T, args.K, args.N, lr, args.ls, args.seed,
+                                                                    c, args.z) + \
              datetime.now().strftime("%Y%m%d-%H%M%S")
 
     if args.exp3:
@@ -165,6 +199,7 @@ parser.add_argument('--lr', dest='lr', type=float,  help='learning rate', defaul
 parser.add_argument('--ls', dest='ls', type=float,  help='best arm loss significance', default=0.5)
 parser.add_argument('--seed', dest='seed', type=int, default=42)
 parser.add_argument('--exp3', dest='exp3', action='store_true', default=False)
+parser.add_argument('--z', dest='z', type=str,  help='z alg', default='KS')
 
 args = parser.parse_args()
 
@@ -243,18 +278,27 @@ def main(args):
             l_t = loss_a_t[a_t]
             observed_arms[t][agent] = a_t
 
-            q_agents, costs, z = choose_agent_to_query(id=agent, communication_costs=communication_costs[t],
-                                                            arms_dist=arms_dist, lr=lr, exp3=args.exp3)
+            if args.z == 'KS':
+                q_agents, costs, z = choose_agent_to_query_by_KS(id=agent, communication_costs=communication_costs[t],
+                                                           arms_dist=arms_dist, lr=lr, exp3=args.exp3)
+            else:
+                q_agents, costs, z = choose_agent_to_query(id=agent, communication_costs=communication_costs[t],
+                                                                arms_dist=arms_dist, lr=lr, exp3=args.exp3)
+
             communication_prob[agent] = z
             # store indexes of agent that where queried for history purpose
             queried_agents[t][agent] = q_agents
+            if t % 5000 == 0:
+                z_stat = np.delete(z, [agent])
+                print("Round [{}] Agent [{}]".format(t, agent))
+                # print("Z probabilities {}".format(z))
+                print('Z mean: [{}] , Z std [{}]'.format(np.mean(z_stat), np.std(z_stat)))
 
             # store loss for played arm and communication cost (for history purpose)
             observed_loss[t][agent][0] = l_t
             observed_loss[t][agent][1] = costs
 
-
-        best_arm_loss = np.sum(adv_loss_map[:t+1, best_arm_id:best_arm_id+1])
+        best_arm_loss = np.sum(adv_loss_map[:t+1, best_arm_id])
         avg_com_loss = np.sum(observed_loss[:t+1,:,1]) / N
         avg_obs_loss = np.sum(observed_loss[:t+1,:,0]) / N
 
@@ -281,12 +325,19 @@ def main(args):
         #     arms_dist[t][N] = update_weights(weights=weights, observed_arms[t])
 
     print("Best Arm [{}]".format(best_arm_id))
+    regrets = np.zeros(N)
+
     for agent in range(N):
         obs_loss = np.sum(observed_loss[:, agent, 0])
         com_costs = np.sum(observed_loss[:, agent, 1])
 
+        regrets[agent] = (obs_loss + com_costs - min_loss)
         print("Agent [{}] Regret [{}] Played Loss [{}] Communication Loss [{}]".
-              format(agent, obs_loss + com_costs - min_loss, obs_loss, com_costs))
+              format(agent, regrets[agent], obs_loss, com_costs))
+
+    print("Agents mean regret [{}] mean played loss [{}] mean comm loss [{}] ".format(np.mean(regrets),
+                                                                           np.sum(observed_loss[:, :, 0])/N,
+                                                                           np.sum(observed_loss[:, :, 1])/N))
 
 
 if __name__ == '__main__':
