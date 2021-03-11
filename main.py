@@ -14,8 +14,7 @@ import sys
 from datetime import datetime
 import math
 from scipy.special import softmax
-
-
+from scipy import stats
 from torch.utils.tensorboard import SummaryWriter
 
 
@@ -59,18 +58,27 @@ def get_ub(args, t=None):
     return exp3, exp4, fi
 
 
-def get_learning_rate(args, communication_costs):
+def get_learning_rate(args, communication_costs=None):
 
-    if args.exp3:
-        lr = np.sqrt(2.0 * math.log(args.K, 2) / (args.T * args.K))
+    lr_exp3 = math.sqrt(2.0 * math.log(args.K, 2) / (args.T * args.K))
+    lr_exp4 = 1 / math.sqrt((args.T * min(args.K, args.N)) / math.log(args.N, 2))
 
-    else:
-        # c_tag = args.T * (args.N - 1) * np.sqrt(args.c)
-        c_tag = np.sqrt(args.c)
+    if args.alg == 'Exp3':
+        lr = lr_exp3
+
+    elif args.lr == 'Imp':
+        a = lr_exp3 - lr_exp4
+        b = lr_exp4
+        lr = a * np.sqrt(args.c) + b
+
+    elif args.lr == 'Th':
+        c_tag = args.T * (args.N - 1) * np.sqrt(args.c)
         lr = 1.0 / (math.pow(c_tag/math.log(args.K, 2), (2.0/3.0)) +
                     math.sqrt((args.T * min(args.K, args.N)) / math.log(args.N, 2)))
-        print("Learning rate {}".format(lr))
+    else:
+        raise NotImplementedError("get_learning_rate")
 
+    print("Learning rate {}".format(lr))
     return lr
 
 
@@ -136,6 +144,8 @@ def choose_agent_to_query(id, communication_costs, arms_dist, lr, exp3):
 def choose_agent_to_query_by_KS(id, communication_costs, arms_dist, lr, exp3):
 
     def suprimum_dist(x, y):
+        # print("Inf Norm [{}]".format(max(np.abs(x - y))))
+        # print("Ks [{}]".format(stats.ks_2samp(x, y)))
         return max(np.abs(x - y))
 
     personal_dist = arms_dist[id]
@@ -164,7 +174,6 @@ def choose_agent_to_query_by_KS(id, communication_costs, arms_dist, lr, exp3):
     return coin_flips, tot_communication_cost, sample_prob
 
 
-
 def initialize_history(T, N):
     h = []
     for i in range(N):
@@ -173,16 +182,19 @@ def initialize_history(T, N):
     return h
 
 
-def make_logdir(args, lr ):
+def make_logdir(args):
 
     c = 'random' if args.c is None else args.c
+    if args.alg == 'Exp3':
+        log_dir = "T{}_K{}_N{}_ls{}_seed{}/alg_{}/cost{}/".format(args.T, args.K, args.N, args.ls, args.seed,
+                                                                             args.alg, args.c)
+    else:
+        log_dir = "T{}_K{}_N{}_ls{}_seed{}/alg_{}/z_{}/lr_{}/cost{}/".format(args.T, args.K, args.N, args.ls, args.seed,
+                                                                        args.alg, args.z, args.lr, args.c)
+   # datetime.now().strftime("%Y%m%d-%H%M%S")
 
-    log_dir = "T_{}_K_{}_N_{}_lr_{}_ls_{}_seed_{}_costs_{}_z_{}/".format(args.T, args.K, args.N, lr, args.ls, args.seed,
-                                                                    c, args.z) + \
-             datetime.now().strftime("%Y%m%d-%H%M%S")
-
-    if args.exp3:
-        log_dir = "Exp3_" + log_dir
+    # if args.exp3:
+    #     log_dir = "Exp3_" + log_dir
 
     log_dir = './logs/' + log_dir
     os.makedirs(log_dir)
@@ -193,13 +205,13 @@ parser = argparse.ArgumentParser(description='Process some integers.')
 
 parser.add_argument('--T', dest='T', type=int,  help='Horizontal time', default=100)
 parser.add_argument('--K', dest='K', type=int,  help='Number of arms')
-parser.add_argument('--cost', dest='c', type=float,  help='Number of arms', default=None)
+parser.add_argument('--cost', dest='c', type=float,  help='Number of arms', required=True)
 parser.add_argument('--N', dest='N', type=int, help='Number of cooperating agents')
-parser.add_argument('--lr', dest='lr', type=float,  help='learning rate', default=None)
-parser.add_argument('--ls', dest='ls', type=float,  help='best arm loss significance', default=0.5)
+parser.add_argument('--lr', dest='lr', type=str,  help='learning rate [imp, th]', default=None)
+parser.add_argument('--ls', nargs='+', type=float, help='bests arm loss significance', required=True)
 parser.add_argument('--seed', dest='seed', type=int, default=42)
-parser.add_argument('--exp3', dest='exp3', action='store_true', default=False)
-parser.add_argument('--z', dest='z', type=str,  help='z alg', default='KS')
+parser.add_argument('--alg', dest='alg', type=str,  help='alg , can be [Our, Exp3]', required=True)
+parser.add_argument('--z', dest='z', type=str,  help='z estimation, can be [Th or InfNorm]', default=None)
 
 args = parser.parse_args()
 
@@ -220,26 +232,24 @@ def main(args):
         communication_costs = np.random.random_sample((T, N))
         print("Using rand costs")
 
-    if lr is None:
-        lr = get_learning_rate(args, communication_costs)
+    lr = get_learning_rate(args, communication_costs)
 
-    log_dir = make_logdir(args, lr)
+    log_dir = make_logdir(args)
     sys.stdout = Logger(log_dir=log_dir)
 
-    if args.exp3:
-        print("RUNNING EXP3...")
+    print("RUNNING [{}] Alg...".format(args.alg))
 
     np.random.seed(args.seed)
     # generate oblivious adversary losses
     adv_loss_map = np.random.random_sample((T, K))
-    arm_idx = np.random.choice(K)
-    adv_loss_map[np.random.choice(T, int(args.ls * T)), arm_idx:arm_idx + 1] = 0
+    arm_idx = np.random.choice(K, len(args.ls))
+    for i, idx in enumerate(arm_idx):
+        adv_loss_map[np.random.choice(T, int(args.ls[i] * T)), idx:idx + 1] = 0
 
     mean_loss = np.mean(np.sum(adv_loss_map, axis=0))
     min_loss = np.min(np.sum(adv_loss_map, axis=0))
     best_arm_id = np.argmin(np.sum(adv_loss_map, axis=0))
     # sanity check
-    assert arm_idx == best_arm_id
     print("Mean Loss: [{}]\tBest Arm [{}] with total loss [{}]".format(mean_loss, best_arm_id, min_loss))
 
     arms_ids = np.arange(K, dtype=np.int)
@@ -278,12 +288,18 @@ def main(args):
             l_t = loss_a_t[a_t]
             observed_arms[t][agent] = a_t
 
-            if args.z == 'KS':
-                q_agents, costs, z = choose_agent_to_query_by_KS(id=agent, communication_costs=communication_costs[t],
-                                                           arms_dist=arms_dist, lr=lr, exp3=args.exp3)
-            else:
+            if args.alg == 'Exp3':
                 q_agents, costs, z = choose_agent_to_query(id=agent, communication_costs=communication_costs[t],
-                                                                arms_dist=arms_dist, lr=lr, exp3=args.exp3)
+                                                                arms_dist=arms_dist, lr=lr, exp3=True)
+            elif args.z == 'InfNorm':
+                q_agents, costs, z = choose_agent_to_query_by_KS(id=agent, communication_costs=communication_costs[t],
+                                                           arms_dist=arms_dist, lr=lr, exp3=False)
+            elif args.z == 'Th':
+                q_agents, costs, z = choose_agent_to_query(id=agent, communication_costs=communication_costs[t],
+                                                                arms_dist=arms_dist, lr=lr, exp3=False)
+            else:
+                raise NotImplementedError("choose_agent_to_query alg")
+
 
             communication_prob[agent] = z
             # store indexes of agent that where queried for history purpose
@@ -311,8 +327,11 @@ def main(args):
                                       'fi_UB': fi,
                                        'regret': avg_com_loss + avg_obs_loss - best_arm_loss, }, t)
 
-        writer.add_histogram('sampled_agents',  queried_agents[t], t)
+        # writer.add_histogram('sampled_agents',  queried_agents[t], t)
         writer.add_histogram('played_arms', observed_arms[t], t)
+
+        if t % 5000:
+            writer.add_histogram('played_arms_5000', observed_arms[t], t)
 
         # update weights
         for agent in range(N):
