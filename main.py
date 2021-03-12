@@ -196,7 +196,7 @@ def make_logdir(args):
     # if args.exp3:
     #     log_dir = "Exp3_" + log_dir
 
-    log_dir = './logs/' + log_dir
+    log_dir = '/media/data3/ronsh/mab/logs/' + log_dir
     os.makedirs(log_dir)
     return log_dir
 
@@ -322,10 +322,13 @@ def main(args):
                                        'Avg Com Cost': avg_com_loss,
                                        'Avg Observed Cost': avg_obs_loss, }, t)
 
-        writer.add_scalars('Regret', {'exp3_UB': exp3,
-                                       'exp4_UB': exp4,
-                                      'fi_UB': fi,
-                                       'regret': avg_com_loss + avg_obs_loss - best_arm_loss, }, t)
+        if args.alg == 'Exp3':
+            writer.add_scalars('Regret', {'exp3_UB': exp3,
+                                           'exp4_UB': exp4,
+                                          'fi_UB': fi,
+                                           'Exp3': avg_com_loss + avg_obs_loss - best_arm_loss, }, t)
+        else:
+            writer.add_scalars('Regret', {'Our': avg_com_loss + avg_obs_loss - best_arm_loss}, t)
 
         # writer.add_histogram('sampled_agents',  queried_agents[t], t)
         writer.add_histogram('played_arms', observed_arms[t], t)
